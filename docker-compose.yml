@@ -7,8 +7,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - mem0_history:/app/history
-      - mem0_logs:/app/logs
+      - ./data/history:/app/history
+      - ./data/logs:/app/logs
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -31,7 +31,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgvector_data:/var/lib/postgresql/data
+      - ./data/pgvector:/var/lib/postgresql/data
     environment:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_USER=postgres
@@ -44,14 +44,6 @@ services:
       retries: 5
     networks:
       - mem0-net
-
-volumes:
-  mem0_history:
-    name: mem0_history
-  mem0_logs:
-    name: mem0_logs
-  pgvector_data:
-    name: pgvector_data
 
 networks:
   mem0-net:

@@ -44,9 +44,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: |
-            MEM0_REPO=https://github.com/mem0ai/mem0.git
-            MEM0_REF=main
 
       - name: Summary
         if: github.event_name != 'pull_request'
