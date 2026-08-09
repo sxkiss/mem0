@@ -4,24 +4,16 @@ WORKDIR /app
 
 RUN sed -i 's@deb.debian.org@repo.huaweicloud.com@g' /etc/apt/sources.list.d/debian.sources && \
     apt-get update && \
-    apt-get install -y --no-install-recommends curl git libpq-dev gcc && \
+    apt-get install -y --no-install-recommends curl libpq-dev gcc && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-ARG MEM0_REPO=https://github.com/mem0ai/mem0.git
-ARG MEM0_REF=main
-
-# 拉取 mem0 源码（带重试）
-RUN for i in 1 2 3 4 5; do \
-        git clone --depth 1 --branch ${MEM0_REF} ${MEM0_REPO} . && break || \
-        echo "Clone failed (attempt $i), retrying..." && sleep 5; \
-    done && \
-    test -d /app/server
-
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r server/requirements.txt
+    pip install --no-cache-dir fastapi uvicorn sqlalchemy psycopg pydantic
+
+COPY server.py .
 
 RUN mkdir -p /app/history /app/logs && chmod 777 /app/history /app/logs
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "cd /app/server && uvicorn main:app --host 0.0.0.0 --port 8000"]
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
