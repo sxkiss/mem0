@@ -65,7 +65,8 @@ def cfg(): return {"version": "v1.1", "vector_store": {"provider": "pgvector"}, 
 
 @app.post("/memories")
 async def add(req: MAdd):
-    text = " ".join(m.get("content","") for m in req.messages)[:2000]
+    full_text = " ".join(m.get("content","") for m in req.messages)[:2000]
+    text_content = full_text
     mid = hashlib.md5((text + str(req.agent_id)).encode()).hexdigest()[:16]
     h = hashlib.sha256(text.encode()).hexdigest()
     kw = kws(text)
@@ -75,7 +76,7 @@ async def add(req: MAdd):
             VALUES (:id,:d,:u,:a,:r,:h,:m,:e,:k)
             ON CONFLICT (memory_id) DO UPDATE SET data=EXCLUDED.data, metadata=EXCLUDED.metadata,
             keywords=EXCLUDED.keywords, embedding=EXCLUDED.embedding, updated_at=NOW()"""),
-            {"id":mid,"d":text,"u":req.user_id,"a":req.agent_id,"r":req.run_id,"h":h,
+            {"id":mid,"d":text_content,"u":req.user_id,"a":req.agent_id,"r":req.run_id,"h":h,
              "m":json.dumps(req.metadata or {}),"e":str(emb),"k":kw})
         c.commit()
     return {"results": [{"memory_id": mid, "memory": text}]}
