@@ -1,0 +1,13 @@
+.git
+.github
+.claude
+.env
+.spec-workflow
+.playwright-mcp
+.vscode
+.idea
+.gitignore
+docker-compose.yml
+*.log
+.DS_Store
+Thumbs.db

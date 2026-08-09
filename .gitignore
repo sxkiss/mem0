@@ -1,0 +1,27 @@
+# Claude
+.claude/
+
+# Docker compose override
+docker-compose.override.yml
+
+# Env
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Spec workflow
+.spec-workflow/
+
+# Playwright
+.playwright-mcp/
+
+# Logs
+*.log

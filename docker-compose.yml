@@ -1,0 +1,59 @@
+services:
+  mem0:
+    build: .
+    image: sxkiss/mem0:latest
+    container_name: mem0
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - mem0_history:/app/history
+      - mem0_logs:/app/logs
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - HISTORY_DB_PATH=/app/history/history.db
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - AUTH_DISABLED=true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mem0-net
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: mem0-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=postgres
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mem0-net
+
+volumes:
+  mem0_history:
+    name: mem0_history
+  mem0_logs:
+    name: mem0_logs
+  pgvector_data:
+    name: pgvector_data
+
+networks:
+  mem0-net:
+    name: mem0_net
+    driver: bridge
