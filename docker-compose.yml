@@ -4,32 +4,30 @@ services:
     image: sxkiss/mem0:latest
     container_name: mem0
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    network_mode: host
     volumes:
       - ./data/history:/app/history
       - ./data/logs:/app/logs
     environment:
-      - POSTGRES_HOST=postgres
+      - POSTGRES_HOST=127.0.0.1
       - POSTGRES_PORT=5432
       - POSTGRES_DB=postgres
+      - APP_DB_NAME=mem0_app
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - HISTORY_DB_PATH=/app/history/history.db
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_API_KEY=PROXY_MANAGED
+      - OPENAI_BASE_URL=http://127.0.0.1:5001/v1
+      - MEM0_DEFAULT_LLM_MODEL=mimo-v2.5-free
+      - MEM0_DEFAULT_EMBEDDER_MODEL=text-embedding-3-small
       - AUTH_DISABLED=true
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - mem0-net
+    command: ["sh", "-c", "cd /app/server && uvicorn main:app --host 0.0.0.0 --port 8000"]
 
   postgres:
     image: pgvector/pgvector:pg17
     container_name: mem0-postgres
     restart: unless-stopped
-    ports:
-      - "5432:5432"
+    network_mode: host
     volumes:
       - ./data/pgvector:/var/lib/postgresql/data
     environment:
@@ -42,10 +40,3 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - mem0-net
-
-networks:
-  mem0-net:
-    name: mem0_net
-    driver: bridge

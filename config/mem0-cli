@@ -1,0 +1,43 @@
+#!/bin/bash
+# mem0 CLI - 命令行记忆工具
+# 用法: mem0-cli add "内容" [agent_id]
+#       mem0-cli search "关键词" [agent_id]
+#       mem0-cli list [agent_id]
+
+API="http://localhost:8000"
+AGENT="${2:-cli}"
+CMD="$1"
+shift
+
+add() {
+    TEXT="$1"
+    curl -s -X POST "$API/memories" \
+        -H "Content-Type: application/json" \
+        -d "{\"messages\":[{\"role\":\"user\",\"content\":\"$TEXT\"}],\"agent_id\":\"$AGENT\"}" | python3 -m json.tool
+}
+
+search() {
+    QUERY="$1"
+    curl -s -X POST "$API/search" \
+        -H "Content-Type: application/json" \
+        -d "{\"query\":\"$QUERY\",\"filters\":{\"agent_id\":\"$AGENT\"},\"top_k\":5}" | python3 -m json.tool
+}
+
+list() {
+    curl -s "$API/memories?agent_id=$AGENT" | python3 -m json.tool
+}
+
+cross_search() {
+    QUERY="$1"
+    curl -s -X POST "$API/search" \
+        -H "Content-Type: application/json" \
+        -d "{\"query\":\"$QUERY\",\"top_k\":10}" | python3 -m json.tool
+}
+
+case "$CMD" in
+    add) add "$@" ;;
+    search) search "$@" ;;
+    list) list "$@" ;;
+    all) cross_search "$@" ;;
+    *) echo "用法: mem0-cli {add|search|list|all} [参数] [agent_id]" ;;
+esac

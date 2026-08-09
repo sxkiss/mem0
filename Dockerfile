@@ -9,7 +9,13 @@ RUN sed -i 's@deb.debian.org@repo.huaweicloud.com@g' /etc/apt/sources.list.d/deb
 
 ARG MEM0_REPO=https://github.com/mem0ai/mem0.git
 ARG MEM0_REF=main
-RUN git clone --depth 1 --branch ${MEM0_REF} ${MEM0_REPO} .
+
+# 拉取 mem0 源码（带重试）
+RUN for i in 1 2 3 4 5; do \
+        git clone --depth 1 --branch ${MEM0_REF} ${MEM0_REPO} . && break || \
+        echo "Clone failed (attempt $i), retrying..." && sleep 5; \
+    done && \
+    test -d /app/server
 
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r server/requirements.txt
