@@ -66,11 +66,10 @@ def cfg(): return {"version": "v1.1", "vector_store": {"provider": "pgvector"}, 
 @app.post("/memories")
 async def add(req: MAdd):
     full_text = " ".join(m.get("content","") for m in req.messages)[:2000]
-    text_content = full_text
-    mid = hashlib.md5((text + str(req.agent_id)).encode()).hexdigest()[:16]
-    h = hashlib.sha256(text.encode()).hexdigest()
-    kw = kws(text)
-    emb = embed(text)
+    mid = hashlib.md5((full_text + str(req.agent_id)).encode()).hexdigest()[:16]
+    h = hashlib.sha256(full_text.encode()).hexdigest()
+    kw = kws(full_text)
+    emb = embed(full_text)
     with engine.connect() as c:
         c.execute(text("""INSERT INTO memories (memory_id,data,user_id,agent_id,run_id,hash,metadata,embedding,keywords)
             VALUES (:id,:d,:u,:a,:r,:h,:m,:e,:k)
