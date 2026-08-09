@@ -3,38 +3,34 @@ import os, json, hashlib, re
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import create_engine, text
+import psycopg
 
 app = FastAPI(title="mem0 Memory")
 
-PG = {k: os.getenv(k, d) for k, d in [
-    ("POSTGRES_HOST", "127.0.0.1"),
-    ("POSTGRES_PORT", "5432"),
-    ("POSTGRES_DB", "postgres"),
-    ("POSTGRES_USER", "postgres"),
-    ("POSTGRES_PASSWORD", "postgres"),
-]}
+PG_HOST = os.getenv("POSTGRES_HOST", "127.0.0.1")
+PG_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
+PG_DB = os.getenv("POSTGRES_DB", "postgres")
+PG_USER = os.getenv("POSTGRES_USER", "postgres")
+PG_PASS = os.getenv("POSTGRES_PASSWORD", "postgres")
 
-engine = create_engine(
-    f"postgresql+psycopg://{PG['POSTGRES_USER']}:{PG['POSTGRES_PASSWORD']}@{PG['POSTGRES_HOST']}:{PG['POSTGRES_PORT']}/{PG['POSTGRES_DB']}",
-    pool_pre_ping=True
-)
+def get_conn():
+    return psycopg.connect(f"host={PG_HOST} port={PG_PORT} dbname={PG_DB} user={PG_USER} password={PG_PASS}")
 
-with engine.connect() as c:
-    c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-    c.execute(text("""CREATE TABLE IF NOT EXISTS memories (
+with get_conn() as conn:
+    conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    conn.execute("""CREATE TABLE IF NOT EXISTS memories (
         id SERIAL PRIMARY KEY, memory_id VARCHAR(64) UNIQUE NOT NULL,
         data TEXT NOT NULL, user_id VARCHAR(255), agent_id VARCHAR(255),
         run_id VARCHAR(255), hash VARCHAR(64) NOT NULL,
         metadata JSONB DEFAULT '{}', embedding vector(384),
         keywords TEXT[] DEFAULT '{}',
         created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW()
-    )"""))
-    c.execute(text("CREATE INDEX IF NOT EXISTS idx_mem_agent ON memories(agent_id)"))
-    c.execute(text("CREATE INDEX IF NOT EXISTS idx_mem_user ON memories(user_id)"))
-    c.execute(text("CREATE INDEX IF NOT EXISTS idx_mem_kw ON memories USING GIN(keywords)"))
-    c.execute(text("CREATE INDEX IF NOT EXISTS idx_mem_emb ON memories USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)"))
-    c.commit()
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_agent ON memories(agent_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_user ON memories(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_kw ON memories USING GIN(keywords)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_emb ON memories USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)")
+    conn.commit()
 
 def embed(t: str, dim=384) -> list:
     v = [0.0]*dim
@@ -70,60 +66,73 @@ async def add(req: MAdd):
     h = hashlib.sha256(full_text.encode()).hexdigest()
     kw = kws(full_text)
     emb = embed(full_text)
-    with engine.connect() as c:
-        c.execute(text("""INSERT INTO memories (memory_id,data,user_id,agent_id,run_id,hash,metadata,embedding,keywords)
-            VALUES (:id,:d,:u,:a,:r,:h,:m,:e,:k)
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO memories (memory_id,data,user_id,agent_id,run_id,hash,metadata,embedding,keywords)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s::vector,%s)
             ON CONFLICT (memory_id) DO UPDATE SET data=EXCLUDED.data, metadata=EXCLUDED.metadata,
-            keywords=EXCLUDED.keywords, embedding=EXCLUDED.embedding, updated_at=NOW()"""),
-            {"id":mid,"d":text_content,"u":req.user_id,"a":req.agent_id,"r":req.run_id,"h":h,
-             "m":json.dumps(req.metadata or {}),"e":str(emb),"k":kw})
-        c.commit()
-    return {"results": [{"memory_id": mid, "memory": text}]}
+            keywords=EXCLUDED.keywords, embedding=EXCLUDED.embedding, updated_at=NOW()""",
+            (mid, full_text, req.user_id, req.agent_id, req.run_id, h,
+             json.dumps(req.metadata or {}), str(emb), kw))
+        conn.commit()
+    return {"results": [{"memory_id": mid, "memory": full_text}]}
 
 @app.post("/search")
 async def search(req: MSearch):
     qe = embed(req.query); qk = kws(req.query)
-    fl, p = [], {"emb": str(qe), "top_k": req.top_k*2}
-    if req.agent_id: fl.append("agent_id=:a"); p["a"]=req.agent_id
-    if req.user_id: fl.append("user_id=:u"); p["u"]=req.user_id
-    w = " AND ".join(fl) if fl else "1=1"
-    with engine.connect() as c:
-        vr = c.execute(text(f"SELECT memory_id,data,user_id,agent_id,1-(embedding<=>:emb::vector) score FROM memories WHERE {w} ORDER BY embedding<=>:emb::vector LIMIT :top_k"), p).fetchall()
+    emb_str = str(qe)
+    conditions = []
+    params = [emb_str]
+    if req.agent_id:
+        conditions.append("agent_id = %s")
+        params.append(req.agent_id)
+    if req.user_id:
+        conditions.append("user_id = %s")
+        params.append(req.user_id)
+    wc = " AND ".join(conditions) if conditions else "1=1"
+    with get_conn() as conn:
+        vr = conn.execute(
+            f"SELECT memory_id,data,user_id,agent_id,1-(embedding <=> %s::vector) as score FROM memories WHERE {wc} ORDER BY embedding <=> %s::vector LIMIT %s",
+            params + [emb_str, req.top_k*2]
+        ).fetchall()
         kr = []
         if qk:
-            kf = " AND ".join(f"keywords @> ARRAY[:k{i}]" for i in range(len(qk)))
-            kp = {f"k{i}":k for i,k in enumerate(qk)}; kp.update(p)
-            kr = c.execute(text(f"SELECT memory_id,data,user_id,agent_id,0.8 score FROM memories WHERE {w} AND {kf} LIMIT :top_k"), kp).fetchall()
+            kw_conds = " OR ".join(["keywords @> %s"] * len(qk))
+            kr = conn.execute(
+                f"SELECT memory_id,data,user_id,agent_id,0.8 as score FROM memories WHERE {wc} AND ({kw_conds}) LIMIT %s",
+                params + [list(k for k in qk)] * len(qk) + [req.top_k*2]
+            ).fetchall()
     seen = {}
     for r in vr+kr:
-        if r.memory_id not in seen: seen[r.memory_id] = {"id":r.memory_id,"memory":r.data,"user_id":r.user_id,"agent_id":r.agent_id,"score":round(float(r.score),4)}
+        if r[0] not in seen:
+            seen[r[0]] = {"id":r[0],"memory":r[1],"user_id":r[2],"agent_id":r[3],"score":round(float(r[4]),4)}
     return {"results": sorted(seen.values(), key=lambda x:x["score"], reverse=True)[:req.top_k]}
 
 @app.get("/memories")
 def lst(agent_id: str=Query(None), user_id: str=Query(None)):
-    fl,p = [],[]
-    if agent_id: fl.append("agent_id=:a"); p["a"]=agent_id
-    if user_id: fl.append("user_id=:u"); p["u"]=user_id
-    w = " AND ".join(fl) if fl else "1=1"
-    with engine.connect() as c:
-        rows = c.execute(text(f"SELECT memory_id,data,user_id,agent_id,created_at FROM memories WHERE {w} ORDER BY created_at DESC LIMIT 1000"), p).fetchall()
-    return {"results":[{"id":r.memory_id,"memory":r.data,"user_id":r.user_id,"agent_id":r.agent_id,"created_at":str(r.created_at)} for r in rows]}
+    wc, params = [], []
+    if agent_id: wc.append("agent_id = %s"); params.append(agent_id)
+    if user_id: wc.append("user_id = %s"); params.append(user_id)
+    ws = " AND ".join(wc) if wc else "1=1"
+    with get_conn() as conn:
+        rows = conn.execute(f"SELECT memory_id,data,user_id,agent_id,created_at FROM memories WHERE {ws} ORDER BY created_at DESC LIMIT 1000", params).fetchall()
+    return {"results":[{"id":r[0],"memory":r[1],"user_id":r[2],"agent_id":r[3],"created_at":str(r[4])} for r in rows]}
 
 @app.delete("/memories/{mid}")
 def rm(mid: str):
-    with engine.connect() as c:
-        c.execute(text("DELETE FROM memories WHERE memory_id=:id"),{"id":mid}); c.commit()
+    with get_conn() as conn:
+        conn.execute("DELETE FROM memories WHERE memory_id = %s", (mid,)); conn.commit()
     return {"status":"deleted"}
 
 @app.get("/memories/{mid}/history")
 def hist(mid: str):
-    with engine.connect() as c:
-        r = c.execute(text("SELECT data,updated_at FROM memories WHERE memory_id=:id"),{"id":mid}).fetchone()
+    with get_conn() as conn:
+        r = conn.execute("SELECT data,updated_at FROM memories WHERE memory_id=%s", (mid,)).fetchone()
     if not r: raise HTTPException(404)
-    return {"memory":r.data,"updated_at":str(r.updated_at)}
+    return {"memory":r[0],"updated_at":str(r[1])}
 
 @app.post("/reset")
 def rst():
-    with engine.connect() as c:
-        c.execute(text("TRUNCATE TABLE memories RESTART IDENTITY")); c.commit()
+    with get_conn() as conn:
+        conn.execute("TRUNCATE TABLE memories RESTART IDENTITY"); conn.commit()
     return {"message":"All memories reset"}
