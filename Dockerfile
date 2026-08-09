@@ -4,17 +4,15 @@ WORKDIR /app
 
 RUN sed -i 's@deb.debian.org@repo.huaweicloud.com@g' /etc/apt/sources.list.d/debian.sources && \
     apt-get update && \
-    apt-get install -y --no-install-recommends curl libpq-dev gcc && \
+    apt-get install -y --no-install-recommends curl git libpq-dev gcc && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# 先复制依赖文件利用缓存
-COPY server/requirements.txt ./requirements.txt
+ARG MEM0_REPO=https://github.com/mem0ai/mem0.git
+ARG MEM0_REF=main
+RUN git clone --depth 1 --branch ${MEM0_REF} ${MEM0_REPO} .
 
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-# 复制整个仓库（actions/checkout 已拉好代码）
-COPY . .
+    pip install --no-cache-dir -r server/requirements.txt
 
 RUN mkdir -p /app/history /app/logs && chmod 777 /app/history /app/logs
 
