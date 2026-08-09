@@ -21,7 +21,6 @@ services:
       - MEM0_DEFAULT_LLM_MODEL=mimo-v2.5-free
       - MEM0_DEFAULT_EMBEDDER_MODEL=text-embedding-3-small
       - AUTH_DISABLED=true
-    command: ["sh", "-c", "cd /app/server && uvicorn main:app --host 0.0.0.0 --port 8000"]
 
   postgres:
     image: pgvector/pgvector:pg17
