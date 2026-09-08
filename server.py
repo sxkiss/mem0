@@ -1,11 +1,16 @@
-"""轻量级记忆服务 - pgvector 存储，无需外部 LLM"""
-import os, json, hashlib, re
+"""轻量级记忆服务 - pgvector + BAAI/bge-m3 语义嵌入"""
+import os, json, hashlib, re, time, logging
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 import psycopg
 
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("mem0")
+
 app = FastAPI(title="mem0 Memory")
+
+EMBED_DIM = 1024
 
 PG_HOST = os.getenv("POSTGRES_HOST", "127.0.0.1")
 PG_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
@@ -16,33 +21,48 @@ PG_PASS = os.getenv("POSTGRES_PASSWORD", "postgres")
 def get_conn():
     return psycopg.connect(f"host={PG_HOST} port={PG_PORT} dbname={PG_DB} user={PG_USER} password={PG_PASS}")
 
-with get_conn() as conn:
-    conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-    conn.execute("""CREATE TABLE IF NOT EXISTS memories (
-        id SERIAL PRIMARY KEY, memory_id VARCHAR(64) UNIQUE NOT NULL,
-        data TEXT NOT NULL, user_id VARCHAR(255), agent_id VARCHAR(255),
-        run_id VARCHAR(255), hash VARCHAR(64) NOT NULL,
-        metadata JSONB DEFAULT '{}', embedding vector(384),
-        keywords TEXT[] DEFAULT '{}',
-        created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW()
-    )""")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_agent ON memories(agent_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_user ON memories(user_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_kw ON memories USING GIN(keywords)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_emb ON memories USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)")
-    conn.commit()
+log.info("Loading BAAI/bge-m3 model...")
+t0 = time.time()
+from sentence_transformers import SentenceTransformer
+_model = SentenceTransformer("BAAI/bge-m3")
+log.info(f"bge-m3 loaded in {time.time()-t0:.1f}s")
 
-def embed(t: str, dim=384) -> list:
-    v = [0.0]*dim
-    for w in re.findall(r'\w+', t.lower()):
-        h = int(hashlib.sha256(w.encode()).hexdigest(), 16)
-        for i in range(dim): v[i] += ((h >> (i%32)) & 1)*0.5 - 0.25
-    n = sum(x*x for x in v)**0.5
-    return [x/n for x in v] if n > 0 else v
+def embed(text: str) -> list:
+    return _model.encode(text, normalize_embeddings=True).tolist()
 
 def kws(t: str) -> List[str]:
     stop = {"the","and","for","are","but","not","you","all","can","had","her","was","one","our","out","has","have","been","from","this","that","with","they","will","what","when","where","who","which","their","about","would","could","should"}
     return list(set(w for w in re.findall(r'\b[a-zA-Z]{3,}\b', t.lower()) if w not in stop))[:20]
+
+with get_conn() as conn:
+    conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    cols = conn.execute("""
+        SELECT column_name, udt_name
+        FROM information_schema.columns
+        WHERE table_name='memories' AND column_name='embedding'
+    """).fetchone()
+    if cols and 'dim' in cols[1]:
+        cur_dim = int(re.search(r'\d+', cols[1]).group())
+        if cur_dim != EMBED_DIM:
+            log.info(f"Migrating embedding dimension {cur_dim} -> {EMBED_DIM}")
+            conn.execute("DROP TABLE IF EXISTS memories CASCADE")
+            conn.commit()
+            cols = None
+    if not cols:
+        conn.execute(f"""CREATE TABLE IF NOT EXISTS memories (
+            id SERIAL PRIMARY KEY, memory_id VARCHAR(64) UNIQUE NOT NULL,
+            data TEXT NOT NULL, user_id VARCHAR(255), agent_id VARCHAR(255),
+            run_id VARCHAR(255), hash VARCHAR(64) NOT NULL,
+            metadata JSONB DEFAULT '{{}}', embedding vector({EMBED_DIM}),
+            keywords TEXT[] DEFAULT '{{}}',
+            created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW()
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_agent ON memories(agent_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_user ON memories(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_kw ON memories USING GIN(keywords)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mem_emb ON memories USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)")
+        conn.commit()
+    log.info("Database ready")
 
 class MAdd(BaseModel):
     messages: List[Dict[str, str]]
@@ -54,10 +74,10 @@ class MSearch(BaseModel):
     top_k: int = 10; threshold: float = 0.3
 
 @app.get("/")
-def root(): return {"status": "ok", "engine": "pgvector"}
+def root(): return {"status": "ok", "engine": "pgvector", "embedder": "bge-m3", "dim": EMBED_DIM}
 
 @app.get("/configure")
-def cfg(): return {"version": "v1.1", "vector_store": {"provider": "pgvector"}, "llm": {"provider": "none"}, "embedder": {"provider": "local"}}
+def cfg(): return {"version": "v2.0", "vector_store": {"provider": "pgvector"}, "llm": {"provider": "none"}, "embedder": {"provider": "bge-m3", "dim": EMBED_DIM}}
 
 @app.post("/memories")
 async def add(req: MAdd):
