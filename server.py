@@ -172,21 +172,23 @@ async def update(mid: str, req: MUpdate):
 async def search(req: MSearch):
     qe = embed(req.query); qk = kws(req.query)
     emb_str = str(qe)
+    
+    # 构建 WHERE 条件和对应参数（不含 embedding）
     conditions = []
-    params = [emb_str]
+    wc_params = []
     if req.agent_id:
         conditions.append("agent_id = %s")
-        params.append(req.agent_id)
+        wc_params.append(req.agent_id)
     if req.user_id:
         conditions.append("user_id = %s")
-        params.append(req.user_id)
+        wc_params.append(req.user_id)
     wc = " AND ".join(conditions) if conditions else "1=1"
     
     with get_conn() as conn:
         # 向量检索
         vr = conn.execute(
             f"SELECT memory_id,data,user_id,agent_id,metadata,1-(embedding <=> %s::vector) as score FROM memories WHERE {wc} ORDER BY embedding <=> %s::vector LIMIT %s",
-            params + [emb_str, req.top_k*2]
+            [emb_str] + wc_params + [emb_str, req.top_k*2]
         ).fetchall()
         
         # 关键词检索
@@ -195,7 +197,7 @@ async def search(req: MSearch):
             kw_conds = " OR ".join(["keywords @> %s"] * len(qk))
             kr = conn.execute(
                 f"SELECT memory_id,data,user_id,agent_id,metadata,0.8 as score FROM memories WHERE {wc} AND ({kw_conds}) LIMIT %s",
-                params + list(qk) + [req.top_k*2]
+                wc_params + list(qk) + [req.top_k*2]
             ).fetchall()
     
     # 合并去重，精排（取加权平均分）
