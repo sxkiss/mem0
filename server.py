@@ -195,7 +195,7 @@ async def search(req: MSearch):
             kw_conds = " OR ".join(["keywords @> %s"] * len(qk))
             kr = conn.execute(
                 f"SELECT memory_id,data,user_id,agent_id,metadata,0.8 as score FROM memories WHERE {wc} AND ({kw_conds}) LIMIT %s",
-                params + [list(k for k in qk)] * len(qk) + [req.top_k*2]
+                params + list(qk) + [req.top_k*2]
             ).fetchall()
     
     # 合并去重，精排（取加权平均分）
