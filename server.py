@@ -10,7 +10,7 @@ log = logging.getLogger("mem0")
 
 app = FastAPI(title="mem0 Memory")
 
-EMBED_DIM = 1024
+EMBED_DIM = 768
 
 PG_HOST = os.getenv("POSTGRES_HOST", "127.0.0.1")
 PG_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
@@ -24,7 +24,7 @@ def get_conn():
 log.info("Loading BAAI/bge-m3 model...")
 t0 = time.time()
 from sentence_transformers import SentenceTransformer
-_model = SentenceTransformer("BAAI/bge-m3")
+_model = SentenceTransformer("BAAI/bge-base-zh-v1.5")
 log.info(f"bge-m3 loaded in {time.time()-t0:.1f}s")
 
 def embed(text: str) -> list:

@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
         torch --extra-index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir transformers sentence-transformers
 
-RUN python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-m3')"
+RUN python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-base-zh-v1.5')"
 
 COPY server.py .
 
