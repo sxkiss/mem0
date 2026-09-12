@@ -194,7 +194,7 @@ async def search(req: MSearch):
         # 关键词检索
         kr = []
         if qk:
-            kw_conds = " OR ".join(["keywords @> %s"] * len(qk))
+            kw_conds = " OR ".join(["keywords @> ARRAY[%s]::text[]" * 1 for _ in qk])
             kr = conn.execute(
                 f"SELECT memory_id,data,user_id,agent_id,metadata,0.8 as score FROM memories WHERE {wc} AND ({kw_conds}) LIMIT %s",
                 wc_params + list(qk) + [req.top_k*2]
