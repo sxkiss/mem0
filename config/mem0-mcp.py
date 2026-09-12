@@ -33,7 +33,15 @@ def handle(req):
                  "limit": {"type": "integer", "default": 5}
              }, "required": ["query"]}},
             {"name": "mem0_list", "description": "列出当前 agent 的所有记忆",
-             "inputSchema": {"type": "object", "properties": {}}}
+             "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "mem0_delete", "description": "删除指定 ID 的记忆（不可撤销）",
+             "inputSchema": {"type": "object", "properties": {
+                 "id": {"type": "string", "description": "记忆的 memory_id"}
+             }, "required": ["id"]}},
+            {"name": "mem0_import", "description": "批量导入记忆（每行一条，用换行符分隔）",
+             "inputSchema": {"type": "object", "properties": {
+                 "texts": {"type": "string", "description": "多行文本，每行一条记忆"}
+             }, "required": ["texts"]}}
         ]}}
     elif m == "tools/call":
         name = p.get("name"); args = p.get("arguments", {})
@@ -50,6 +58,16 @@ def handle(req):
             elif name == "mem0_list":
                 r = httpx.get(f"{API}/memories?agent_id={AGENT_ID}")
                 res = r.json()
+            elif name == "mem0_delete":
+                r = httpx.delete(f"{API}/memories/{args['id']}", timeout=10)
+                res = {"status": "deleted", "id": args["id"]} if r.status_code == 200 else {"error": f"Delete failed: {r.status_code}"}
+            elif name == "mem0_import":
+                lines = [t.strip() for t in args["texts"].strip().split("\n") if t.strip()]
+                imported = 0
+                for line in lines:
+                    r = httpx.post(f"{API}/memories", json={"messages":[{"role":"user","content":line}],"agent_id":AGENT_ID}, timeout=10)
+                    if r.status_code == 200: imported += 1
+                res = {"status": "ok", "imported": imported, "total": len(lines)}
             else:
                 res = {"error": f"Unknown tool: {name}"}
         except Exception as e:
